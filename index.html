@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>JCRCC Logistics Monitoring</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<style>
+body{
+    font-family:Arial;
+    margin:0;
+    background:#f4f6f9;
+}
+header{
+    background:#0f172a;
+    color:white;
+    padding:15px;
+    text-align:center;
+}
+.container{ padding:20px; }
+
+.card{
+    background:white;
+    padding:15px;
+    border-radius:8px;
+    margin-bottom:15px;
+    box-shadow:0 3px 8px rgba(0,0,0,0.1);
+}
+
+input,select{
+    padding:6px;
+    margin:4px;
+}
+
+button{
+    padding:8px 12px;
+    border:none;
+    background:#1e3a8a;
+    color:white;
+    border-radius:5px;
+    cursor:pointer;
+}
+
+button:hover{ background:#2563eb; }
+
+table{
+    width:100%;
+    border-collapse:collapse;
+}
+
+th,td{
+    border:1px solid #ddd;
+    padding:6px;
+    text-align:center;
+}
+
+th{ background:#e2e8f0; cursor:pointer; }
+
+.summary{
+    display:grid;
+    grid-template-columns: repeat(auto-fit,minmax(200px,1fr));
+    gap:10px;
+}
+
+.summary div{
+    background:#1e3a8a;
+    color:white;
+    padding:15px;
+    border-radius:8px;
+}
+.hidden{ display:none; }
+
+@media(max-width:768px){
+    table{ font-size:12px; }
+}
+</style>
+</head>
+<body>
+
+<header>
+<h2>JCRCC Equipment & Trucking Monitoring System</h2>
+</header>
+
+<div class="container">
+
+<!-- LOGIN -->
+<div id="loginCard" class="card">
+<h3>Login</h3>
+<select id="role">
+<option value="admin">Admin</option>
+<option value="encoder">Encoder</option>
+<option value="viewer">Viewer</option>
+</select>
+<button onclick="login()">Enter System</button>
+</div>
+
+<div id="system" class="hidden">
+
+<div class="summary">
+<div>Total Equipment Hours: <span id="equipTotal">0</span></div>
+<div>Total Truck Hours: <span id="truckTotal">0</span></div>
+<div>Monthly Hours: <span id="monthTotal">0</span></div>
+<div>Fuel Efficiency (Avg L/H): <span id="fuelAvg">0</span></div>
+</div>
+
+<div class="card" id="formCard">
+<h3>Add Record</h3>
+<input type="date" id="date">
+<select id="category">
+<option>Heavy Equipment</option>
+<option>Truck</option>
+</select>
+<input type="text" id="unit" placeholder="Unit No">
+<input type="text" id="project" placeholder="Project">
+Start <input type="time" id="start">
+End <input type="time" id="end">
+Fuel <input type="number" id="fuel" placeholder="Liters">
+<button onclick="addRecord()">Add</button>
+<input type="file" onchange="importExcel(event)">
+<button onclick="exportExcel()">Export Excel</button>
+<button onclick="generateMonthlyReport()">Download Monthly Report</button>
+</div>
+
+<div class="card">
+<input type="text" id="search" placeholder="Search..." onkeyup="render()">
+<table id="table">
+<thead>
+<tr>
+<th onclick="sortTable('date')">Date</th>
+<th>Category</th>
+<th>Unit</th>
+<th>Project</th>
+<th>Total Hours</th>
+<th>Fuel</th>
+<th>Fuel Efficiency</th>
+<th>Utilization %</th>
+</tr>
+</thead>
+<tbody></tbody>
+</table>
+</div>
+
+<div class="card">
+<h3>Analytics Dashboard</h3>
+<canvas id="hoursChart"></canvas>
+</div>
+
+</div>
+</div>
+
+<script>
+
+let role="";
+let data=JSON.parse(localStorage.getItem("jcrccData"))||[];
+
+function login(){
+    role=document.getElementById("role").value;
+    document.getElementById("loginCard").classList.add("hidden");
+    document.getElementById("system").classList.remove("hidden");
+    if(role==="viewer") document.getElementById("formCard").classList.add("hidden");
+    render();
+}
+
+function computeHours(start,end){
+    if(!start||!end) return 0;
+    let s=new Date("2000-01-01 "+start);
+    let e=new Date("2000-01-01 "+end);
+    return ((e-s)/3600000).toFixed(2);
+}
+
+function addRecord(){
+    let total=computeHours(start.value,end.value);
+    let fuelVal=parseFloat(fuel.value||0);
+    let efficiency=fuelVal>0?(total/fuelVal).toFixed(2):0;
+    let utilization=((total/24)*100).toFixed(2);
+
+    data.push({
+        date:date.value,
+        category:category.value,
+        unit:unit.value,
+        project:project.value,
+        total:parseFloat(total),
+        fuel:fuelVal,
+        efficiency:efficiency,
+        utilization:utilization
+    });
+
+    localStorage.setItem("jcrccData",JSON.stringify(data));
+    render();
+}
+
+function render(){
+    let tbody=document.querySelector("#table tbody");
+    tbody.innerHTML="";
+    let searchText=search.value.toLowerCase();
+
+    let equip=0,truck=0,month=0,totalFuel=0,totalHours=0;
+
+    data.forEach(r=>{
+        if(JSON.stringify(r).toLowerCase().includes(searchText)){
+            tbody.innerHTML+=`
+            <tr>
+            <td>${r.date}</td>
+            <td>${r.category}</td>
+            <td>${r.unit}</td>
+            <td>${r.project}</td>
+            <td>${r.total}</td>
+            <td>${r.fuel}</td>
+            <td>${r.efficiency}</td>
+            <td>${r.utilization}</td>
+            </tr>`;
+        }
+
+        if(r.category==="Heavy Equipment") equip+=r.total;
+        if(r.category==="Truck") truck+=r.total;
+
+        if(new Date(r.date).getMonth()===new Date().getMonth()) month+=r.total;
+
+        totalFuel+=r.fuel;
+        totalHours+=r.total;
+    });
+
+    document.getElementById("equipTotal").innerText=equip.toFixed(2);
+    document.getElementById("truckTotal").innerText=truck.toFixed(2);
+    document.getElementById("monthTotal").innerText=month.toFixed(2);
+    document.getElementById("fuelAvg").innerText=
+        totalFuel>0?(totalHours/totalFuel).toFixed(2):0;
+
+    updateChart(equip,truck);
+}
+
+function sortTable(field){
+    data.sort((a,b)=>a[field]>b[field]?1:-1);
+    render();
+}
+
+function exportExcel(){
+    let ws=XLSX.utils.json_to_sheet(data);
+    let wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,"Monitoring");
+    XLSX.writeFile(wb,"JCRCC_Monitoring.xlsx");
+}
+
+function importExcel(e){
+    let file=e.target.files[0];
+    let reader=new FileReader();
+    reader.onload=(evt)=>{
+        let wb=XLSX.read(evt.target.result,{type:'binary'});
+        let ws=wb.Sheets[wb.SheetNames[0]];
+        let imported=XLSX.utils.sheet_to_json(ws);
+        data=data.concat(imported);
+        localStorage.setItem("jcrccData",JSON.stringify(data));
+        render();
+    };
+    reader.readAsBinaryString(file);
+}
+
+function generateMonthlyReport(){
+    let month=new Date().getMonth();
+    let report=data.filter(r=>new Date(r.date).getMonth()===month);
+    let ws=XLSX.utils.json_to_sheet(report);
+    let wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,"Monthly Report");
+    XLSX.writeFile(wb,"Monthly_Report.xlsx");
+}
+
+let chart;
+function updateChart(equip,truck){
+    let ctx=document.getElementById("hoursChart");
+    if(chart) chart.destroy();
+    chart=new Chart(ctx,{
+        type:'bar',
+        data:{
+            labels:['Heavy Equipment','Truck'],
+            datasets:[{
+                label:'Total Hours',
+                data:[equip,truck]
+            }]
+        }
+    });
+}
+
+render();
+
+</script>
+
+</body>
+</html>
